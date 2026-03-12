@@ -19,9 +19,25 @@ except Exception as e:
     print("Erreur lors du chargement des modèles :", e)
     rf_model, xgb_model = None, None
 
-# ✅ Colonnes attendues par les modèles
-features_rf = list(rf_model.feature_names_in_) if rf_model else []
-features_xgb = list(xgb_model.feature_names_in_) if xgb_model else []
+# ✅ Fonction robuste pour récupérer les colonnes
+def get_feature_names(model, fallback=None):
+    if model is None:
+        return []
+    if hasattr(model, "feature_names_in_"):
+        return list(model.feature_names_in_)
+    return fallback if fallback else []
+
+# ✅ Colonnes attendues par défaut
+default_features = [
+    "q606_1_avoir_faim_mais_ne_pas_manger",
+    "q605_1_ne_plus_avoir_de_nourriture_pas_suffisamment_d_argent",
+    "q604_manger_moins_que_ce_que_vous_auriez_du",
+    "q603_sauter_un_repas",
+    "q601_ne_pas_manger_nourriture_saine_nutritive"
+]
+
+features_rf = get_feature_names(rf_model, default_features)
+features_xgb = get_feature_names(xgb_model, default_features)
 
 # ✅ Schéma d'entrée
 class InputData(BaseModel):

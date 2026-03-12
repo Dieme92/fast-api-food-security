@@ -114,7 +114,7 @@ if st.button("🔍 Lancer la prédiction"):
     payload = build_payload(user_inputs, model_name=modele_selectionne)
 
     try:
-        response = requests.post("https://fast-api-food-security.onrender.com/predict", json=payload)
+        response = requests.post("http://127.0.0.1:8000/predict", json=payload)
         response.raise_for_status()
         result = response.json()
 
@@ -151,7 +151,6 @@ if st.button("🔍 Lancer la prédiction"):
         st.error(f"❌ Erreur lors de la requête : {e}")
         if 'response' in locals():
             st.text(f"Réponse brute : {response.text}")
-
 
 
 
