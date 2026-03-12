@@ -10,3 +10,6 @@ matplotlib
 seaborn
 requests
 streamlit
+altair==4.2.2
+
+
