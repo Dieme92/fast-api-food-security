@@ -9,9 +9,10 @@ xgboost
 matplotlib
 seaborn
 requests
-streamlit
+streamlit>=1.25.0
 altair==4.2.2
 imghdr-pure==0.4.1
+
 
 
 
