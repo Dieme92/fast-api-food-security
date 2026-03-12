@@ -11,5 +11,7 @@ seaborn
 requests
 streamlit
 altair==4.2.2
+imghdr-pure==0.4.1
+
 
 
