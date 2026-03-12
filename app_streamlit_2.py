@@ -106,7 +106,7 @@ if st.button("🔍 Lancer la prédiction"):
 
     try:
         # ⚠️ Remplace par ton URL publique Render
-        API_URL = "https://fast-api-food-security-dieme.onrender.com/predict"
+        API_URL = "https://fast-api-food-security.onrender.com/predict"
         response = requests.post(API_URL, json=payload)
         response.raise_for_status()
         result = response.json()
@@ -144,3 +144,4 @@ if st.button("🔍 Lancer la prédiction"):
         st.error(f"❌ Erreur lors de la requête : {e}")
         if 'response' in locals():
             st.text(f"Réponse brute : {response.text}")
+
