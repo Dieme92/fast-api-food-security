@@ -1,110 +1,54 @@
 import streamlit as st
-import requests
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
 import joblib
+import pandas as pd
 
-@st.cache_resource
-def load_models():
-    rf_bundle = joblib.load("modele_food_insecurity_rf.pkl")
-    xgb_bundle = joblib.load("modele_food_insecurity_xgb.pkl")
-    return {
-        "RandomForest": rf_bundle["model"],
-        "XGBoost": xgb_bundle["model"],
-        "features": rf_bundle["features"]
+# Charger le bundle (modèle + features)
+bundle = joblib.load("modele_food_insecurity_best.pkl")
+model = bundle["model"]
+selected_features = bundle["features"]
+
+st.title("📊 Prédiction de l'insécurité alimentaire modérée  ou sévère ")
+
+st.markdown("Entrez les fréquences observées sur les 7 derniers jours :")
+
+# Formulaire Streamlit
+q600 = st.slider("q600 - Inquiets de ne pas avoir suffisamment de nourriture", 0, 3, 0)
+q601 = st.slider("q601 - Ne pas manger nourriture saine/nutritive", 0, 3, 0)
+q602 = st.slider("q602 - Manger nourriture peu variée", 0, 3, 0)
+q603 = st.slider("q603 - Sauter un repas", 0, 3, 0)
+q604 = st.slider("q604 - Manger moins que ce que vous auriez dû", 0, 3, 0)
+q605 = st.slider("q605 - Ne plus avoir de nourriture faute d'argent", 0, 3, 0)
+q606 = st.slider("q606 - Avoir faim mais ne pas manger", 0, 3, 0)
+q607 = st.slider("q607 - Passer toute une journée sans manger", 0, 3, 0)
+
+if st.button("Prédire"):
+    # Construire dictionnaire avec valeurs saisies
+    input_dict = {
+        "q600_inquiets_de_ne_pas_avoir_suffisamment_de_nourriture": q600,
+        "q601_ne_pas_manger_nourriture_saine_nutritive": q601,
+        "q602_manger_nourriture_peu_variee": q602,
+        "q603_sauter_un_repas": q603,
+        "q604_manger_moins_que_ce_que_vous_auriez_du": q604,
+        "q605_1_ne_plus_avoir_de_nourriture_pas_suffisamment_d_argent": q605,
+        "q606_1_avoir_faim_mais_ne_pas_manger": q606,
+        "q607_1_passer_toute_une_journee_sans_manger": q607
     }
 
-models = load_models()
-rf_model = models["RandomForest"]
-xgb_model = models["XGBoost"]
-selected_features = models["features"]
+    # Ajouter colonnes manquantes avec valeur par défaut
+    full_dict = {col: 0 for col in selected_features}
+    full_dict.update(input_dict)
 
-@st.cache_data
-def load_data():
-    df = pd.read_csv("data_encoded_1.csv")
-    return df
+    # Construire DataFrame avec colonnes dans le bon ordre
+    df = pd.DataFrame([full_dict])[selected_features]
 
-df = load_data()
-df_sample = df.sample(100)
+    # Prédiction
+    prediction = model.predict(df)[0]
+    proba = model.predict_proba(df)[0][1]
 
-if st.sidebar.checkbox("Afficher les données brutes", False):
-    st.subheader("Jeu de données 'data_encoded_1.csv' : Echantillon de 100 observateurs")
-    st.write(df_sample)
+    mapping = {
+        0: "Insécurité alimentaire modérée",
+        1: "Insécurité alimentaire sévère"
+    }
 
-st.title("📊 Analyse exploratoire du dataset")
-st.subheader("📌 Statistiques descriptives")
-st.dataframe(df.describe().round(2))
-
-st.write("Colonnes utilisées par les modèles :", selected_features)
-
-def build_payload(user_inputs: dict, model_name="rf_model"):
-    payload = {col: user_inputs.get(col, 0) for col in selected_features}
-    payload["modele"] = model_name
-    return payload
-
-st.subheader("📈 Matrice de corrélation des variables")
-fig, ax = plt.subplots(figsize=(20, 10))
-corr = df[selected_features].corr()
-sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
-st.pyplot(fig)
-
-st.sidebar.subheader("📊 Sélection des variables à afficher")
-vars_selectionnees = st.sidebar.multiselect("Choisissez les variables :", selected_features)
-couleurs = sns.color_palette("husl", len(vars_selectionnees))
-
-if vars_selectionnees:
-    cols = st.columns(2)
-    for i, (var, couleur) in enumerate(zip(vars_selectionnees, couleurs)):
-        with cols[i % 2]:
-            st.subheader(f"Histogramme : {var}")
-            fig, ax = plt.subplots()
-            sns.histplot(df[var], bins=10, kde=True, color=couleur, ax=ax)
-            ax.set_title(f"Distribution de : {var}")
-            st.pyplot(fig)
-
-st.title("🧠 Prédiction d'insécurité alimentaire")
-modele_selectionne = st.radio("Choisissez le modèle :", ["rf_model", "xgb_model"])
-
-user_inputs = {col: st.number_input(f"{col}", min_value=0, max_value=10, value=0) for col in selected_features}
-
-if st.button("🔍 Lancer la prédiction"):
-    payload = build_payload(user_inputs, model_name=modele_selectionne)
-    try:
-        response = requests.post("http://127.0.0.1:8000/predict", json=payload)
-        response.raise_for_status()
-        result = response.json()
-
-        niveau = result.get("niveau", "inconnu")
-        score = result.get("score", 0.00)
-        profil = result.get("profil", "inconnu")
-        probabilites = result.get("probabilités", {})
-
-        if niveau == "sévère":
-            st.error("🔴 Niveau d'insécurité alimentaire : **sévère**")
-        elif niveau == "modérée":
-            st.warning("🟠 Niveau d'insécurité alimentaire : **modérée**")
-        elif niveau == "aucune":
-            st.success("🟢 Aucun signe d'insécurité alimentaire")
-        else:
-            st.info("ℹ️ Niveau inconnu")
-
-        st.write("### 🔎 Score de risque")
-        st.progress(score)
-        st.write(f"Profil détecté : **{profil.capitalize()}**")
-        st.write(f"Modèle utilisé : **{modele_selectionne}**")
-
-        if probabilites:
-            st.write("### 📊 Répartition des probabilités")
-            fig, ax = plt.subplots()
-            labels = ["Modérée", "Sévère"]
-            sizes = [probabilites.get("classe_0", 0.0), probabilites.get("classe_1", 0.0)]
-            ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90,
-                   colors=['#4CAF50', '#FF9800'])
-            ax.axis('equal')
-            st.pyplot(fig)
-
-    except Exception as e:
-        st.error(f"❌ Erreur lors de la requête : {e}")
-        if 'response' in locals():
-            st.text(f"Réponse brute : {response.text}")
+    st.success(f"🎯 Résultat : {mapping[prediction]}")
+    st.info(f"📊 Probabilité associée : {round(float(proba), 3)}")

@@ -1,88 +1,45 @@
-import os
-import joblib
-import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
-from fastapi.responses import JSONResponse
-import uvicorn
+import joblib
+import pandas as pd
+
+# Charger le bundle (modèle + features)
+bundle = joblib.load("modele_food_insecurity_best.pkl")
+model = bundle["model"]
+selected_features = bundle["features"]
+
+# Définition du schéma d'entrée
+class InputData(BaseModel):
+    q600_inquiets_de_ne_pas_avoir_suffisamment_de_nourriture: int
+    q601_ne_pas_manger_nourriture_saine_nutritive: int
+    q602_manger_nourriture_peu_variee: int
+    q603_sauter_un_repas: int
+    q604_manger_moins_que_ce_que_vous_auriez_du: int
+    q605_1_ne_plus_avoir_de_nourriture_pas_suffisamment_d_argent: int
+    q606_1_avoir_faim_mais_ne_pas_manger: int
+    q607_1_passer_toute_une_journee_sans_manger: int
 
 app = FastAPI()
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-try:
-    # Charger les modèles sauvegardés en dictionnaire
-    rf_bundle = joblib.load(os.path.join(BASE_DIR, "modele_food_insecurity_rf.pkl"))
-    xgb_bundle = joblib.load(os.path.join(BASE_DIR, "modele_food_insecurity_xgb.pkl"))
-
-    rf_model = rf_bundle["model"]
-    xgb_model = xgb_bundle["model"]
-    features_rf = rf_bundle["features"]
-    features_xgb = xgb_bundle["features"]
-
-except Exception as e:
-    print("Erreur lors du chargement des modèles :", e)
-    rf_model, xgb_model = None, None
-    features_rf, features_xgb = [], []
-
-# Schéma d'entrée basé sur les colonnes sauvegardées
-class InputData(BaseModel):
-    q606_1_avoir_faim_mais_ne_pas_manger: int
-    q605_1_ne_plus_avoir_de_nourriture_pas_suffisamment_d_argent: int
-    q604_manger_moins_que_ce_que_vous_auriez_du: int
-    q603_sauter_un_repas: int
-    q601_ne_pas_manger_nourriture_saine_nutritive: int
-    modele: str = "rf_model"
-
-@app.get("/health")
-def health_check():
-    return {"status": "API opérationnelle ✅"}
-
 @app.post("/predict")
 def predict(data: InputData):
-    try:
-        if rf_model is None or xgb_model is None:
-            raise RuntimeError("Les modèles n'ont pas été chargés correctement.")
+    input_dict = data.dict()
 
-        input_df = pd.DataFrame([data.dict()])
+    # Ajouter toutes les colonnes attendues par le modèle avec valeur par défaut = 0
+    full_dict = {col: 0 for col in selected_features}
+    full_dict.update(input_dict)
 
-        if data.modele == "xgb_model":
-            model = xgb_model
-            expected_features = features_xgb
-        else:
-            model = rf_model
-            expected_features = features_rf
+    # Construire le DataFrame avec les colonnes dans le bon ordre
+    df = pd.DataFrame([full_dict])[selected_features]
 
-        # Prédiction
-        proba = model.predict_proba(input_df[expected_features])[0]
-        seuil_severe = 0.4
-        prediction_binaire = int(proba[1] > seuil_severe)
+    # Prédiction
+    prediction = model.predict(df)[0]
+    proba = model.predict_proba(df)[0]
 
-        if input_df[expected_features].sum().sum() == 0:
-            niveau = "aucune"
-            profil = "neutre"
-        else:
-            niveau = "sévère" if prediction_binaire == 1 else "modérée"
-            profil = "critique" if prediction_binaire == 1 else "intermédiaire"
+    mapping = {0: "Insécurité alimentaire modérée", 1: "Insécurité alimentaire sévère"}
 
-        return JSONResponse(content={
-            "prediction": prediction_binaire,
-            "niveau": niveau,
-            "profil": profil,
-            "score": round(float(proba[1]), 4),
-            "probabilités": {
-                "classe_0": round(float(proba[0]), 4),
-                "classe_1": round(float(proba[1]), 4)
-            },
-            "modele_utilisé": data.modele
-        })
-
-    except Exception as e:
-        return JSONResponse(content={
-            "error": "Une erreur est survenue",
-            "details": str(e)
-        }, status_code=500)
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    return {
+        "prediction": mapping[prediction],
+        "probability_moderee": round(float(proba[0]), 3),
+        "probability_severe": round(float(proba[1]), 3)
+    }
