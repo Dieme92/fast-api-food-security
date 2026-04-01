@@ -7,9 +7,7 @@ numpy==2.4.3
 scikit-learn==1.8.0
 xgboost==3.2.0
 requests==2.32.5
-streamlit>=1.55.0
+streamlit==1.32.2
 altair==4.2.2
 matplotlib==3.8.2
 seaborn==0.13.2
-
-
