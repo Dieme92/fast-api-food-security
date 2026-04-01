@@ -90,17 +90,23 @@ for col in [
     inputs[col] = st.number_input(col, min_value=0, max_value=3, step=1)
 
 if st.button("Prédire"):
-    # Ajouter colonnes manquantes avec valeur par défaut
-    full_dict = {col: 0 for col in selected_features}
-    full_dict.update(inputs)
+    # Vérifier si toutes les variables valent zéro
+    if all(value == 0 for value in inputs.values()):
+        st.success("Résultat : Sécurité alimentaire")
+        st.info("📊 Probabilité modérée : 0.0")
+        st.info("📊 Probabilité sévère : 0.0")
+    else:
+        # Ajouter colonnes manquantes avec valeur par défaut
+        full_dict = {col: 0 for col in selected_features}
+        full_dict.update(inputs)
 
-    df = pd.DataFrame([full_dict])[selected_features]
+        df = pd.DataFrame([full_dict])[selected_features]
 
-    prediction = model.predict(df)[0]
-    proba = model.predict_proba(df)[0]
+        prediction = model.predict(df)[0]
+        proba = model.predict_proba(df)[0]
 
-    mapping = {0: "Insécurité alimentaire modérée", 1: "Insécurité alimentaire sévère"}
+        mapping = {0: "Insécurité alimentaire modérée", 1: "Insécurité alimentaire sévère"}
 
-    st.success(f"Résultat : {mapping[prediction]}")
-    st.info(f"📊 Probabilité modérée : {round(float(proba[0]), 3)}")
-    st.info(f"📊 Probabilité sévère : {round(float(proba[1]), 3)}")
+        st.success(f"Résultat : {mapping[prediction]}")
+        st.info(f"📊 Probabilité modérée : {round(float(proba[0]), 3)}")
+        st.info(f"📊 Probabilité sévère : {round(float(proba[1]), 3)}")
