@@ -3,27 +3,23 @@ import joblib
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
+from xgboost import XGBClassifier
 
 # Charger le bundle (modèle + features)
 bundle = joblib.load("modele_food_insecurity_best.pkl")
-model = bundle["model"]
+rf_model = bundle["model"]
 selected_features = bundle["features"]
 
-# Charger ton dataset encodé avec la colonne insécurité_alimentaire déjà sauvegardée
+# Charger dataset encodé
 data = pd.read_csv("data_encoded_1.csv")
 
-# --- Sidebar pour exploration ---
+# --- Sidebar exploration ---
 st.sidebar.title("🔎 Exploration des données")
-
 show_raw = st.sidebar.checkbox("📄 Données brutes")
 show_corr = st.sidebar.checkbox("📊 Matrice de corrélation")
-
-variables = st.sidebar.multiselect(
-    "📈 Choisir une ou plusieurs variables :", 
-    selected_features
-)
-show_curves = st.sidebar.button("Afficher les distributions")
-
+variables = st.sidebar.multiselect("📈 Choisir variables :", selected_features)
+show_curves = st.sidebar.button("Afficher distributions")
 show_importances = st.sidebar.button("🌟 Top 5 variables importantes (RandomForest)")
 
 # --- Exploration ---
@@ -31,7 +27,7 @@ st.title("📊 Prédiction de l'insécurité alimentaire")
 
 if show_raw:
     st.subheader("📄 Données brutes")
-    st.write(data.head(20))  # affiche les 20 premières lignes
+    st.write(data.head(20))
 
 if show_corr:
     st.subheader("📊 Matrice de corrélation")
@@ -42,40 +38,87 @@ if show_corr:
 
 if show_curves and variables:
     st.subheader("📈 Distribution des variables choisies")
-    n = len(variables)
-    rows = (n // 2) + (n % 2)  # nombre de lignes nécessaires
-    idx = 0
-
-    for r in range(rows):
-        cols = st.columns(2)  # deux colonnes par ligne
-        for c in range(2):
-            if idx < n:
-                var = variables[idx]
-                with cols[c]:
-                    fig, ax = plt.subplots(figsize=(3.5, 3))  # petit format
-                    sns.histplot(data[var], bins=10, kde=True, ax=ax)
-                    ax.set_title(var, fontsize=9)
-                    st.pyplot(fig)
-                idx += 1
+    for var in variables:
+        fig, ax = plt.subplots(figsize=(3.5, 3))
+        sns.histplot(data[var], bins=10, kde=True, ax=ax)
+        ax.set_title(var, fontsize=9)
+        st.pyplot(fig)
 
 if show_importances:
     st.subheader("🌟 Top 5 variables importantes (RandomForest)")
-    importances = model.feature_importances_
+    importances = rf_model.feature_importances_
     top_idx = importances.argsort()[-5:]
     top_features = [selected_features[i] for i in top_idx]
     top_values = importances[top_idx]
-
     fig, ax = plt.subplots(figsize=(6, 4))
     sns.barplot(x=top_values, y=top_features, ax=ax, color="blue")
     ax.set_title("Top 5 Features - RandomForest")
     st.pyplot(fig)
 
-# --- Section prédiction ---
-st.header("🎯 Prédiction")
+# --- Sélecteur de modèle ---
+st.sidebar.title("⚙️ Choix du modèle")
+model_choice = st.sidebar.radio("Sélectionner le modèle :", ["RandomForest", "XGBoost"])
 
+# --- Évaluation globale ---
+st.header("📊 Évaluation du modèle")
+if st.button("Afficher ROC & Matrice de confusion"):
+    X = data[selected_features]
+    y = data["insécurité_alimentaire"].replace({1:0, 2:1}).astype(int)
+
+    if model_choice == "RandomForest":
+        y_pred = rf_model.predict(X)
+        y_proba = rf_model.predict_proba(X)[:, 1]
+    else:
+        xgb_model = XGBClassifier(use_label_encoder=False, eval_metric="logloss")
+        xgb_model.fit(X, y)
+        y_pred = xgb_model.predict(X)
+        y_proba = xgb_model.predict_proba(X)[:, 1]
+
+    report = classification_report(y, y_pred, target_names=["Modérée", "Sévère"])
+    st.text(f"📊 Rapport {model_choice} :\n" + report)
+
+    cm = confusion_matrix(y, y_pred, labels=[0,1])
+    fig, ax = plt.subplots(figsize=(4, 3))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax,
+                xticklabels=["Modérée", "Sévère"],
+                yticklabels=["Modérée", "Sévère"])
+    ax.set_title(f"Matrice de confusion - {model_choice}")
+    st.pyplot(fig)
+
+    fpr, tpr, thresholds = roc_curve(y, y_proba, pos_label=1)
+    roc_auc = auc(fpr, tpr)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(fpr, tpr, color="blue", lw=2, label=f"AUC = {roc_auc:.5f}")
+    ax.plot([0, 1], [0, 1], color="gray", lw=1, linestyle="--")
+    ax.set_title(f"Courbe ROC - {model_choice}")
+    ax.legend(loc="lower right")
+    st.pyplot(fig)
+
+# --- Comparaison graphique ---
+st.header("📊 Comparaison RandomForest vs XGBoost")
+if st.button("Afficher comparaison graphique"):
+    results = pd.DataFrame({
+        "Modèle": ["RandomForest", "XGBoost"],
+        "Accuracy": [0.992308, 0.992308],
+        "Recall (Sévère)": [0.98, 0.97],
+        "Précision (Sévère)": [0.87, 1.00],
+        "F1-score (Sévère)": [0.92, 0.99],
+        "AUC": [0.999873, 0.999958]
+    })
+    st.dataframe(results, use_container_width=True)
+
+    metrics = ["Accuracy", "Recall (Sévère)", "Précision (Sévère)", "F1-score (Sévère)", "AUC"]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    results.set_index("Modèle")[metrics].plot(kind="bar", ax=ax)
+    ax.set_title("Comparaison des métriques principales")
+    ax.set_ylabel("Score")
+    plt.xticks(rotation=0)
+    st.pyplot(fig)
+
+# --- Section prédiction (à la fin) ---
+st.header("🎯 Prédiction personnalisée")
 st.markdown("Entrez les fréquences observées sur les 7 derniers jours (0 = jamais, 1 = 1-2 jours, 2 = 3-4 jours, 3 = 5-7 jours) :")
 
-# Champs de saisie
 inputs = {}
 for col in [
     "q600_inquiets_de_ne_pas_avoir_suffisamment_de_nourriture",
@@ -88,25 +131,35 @@ for col in [
     "q607_1_passer_toute_une_journee_sans_manger"
 ]:
     inputs[col] = st.number_input(col, min_value=0, max_value=3, step=1)
-
 if st.button("Prédire"):
     # Vérifier si toutes les variables valent zéro
     if all(value == 0 for value in inputs.values()):
-        st.success("Résultat : Sécurité alimentaire")
+        st.success("Résultat : Sécurité alimentaire ✅")
         st.info("📊 Probabilité modérée : 0.0")
         st.info("📊 Probabilité sévère : 0.0")
     else:
-        # Ajouter colonnes manquantes avec valeur par défaut
+        # Préparer le dataframe pour la prédiction
         full_dict = {col: 0 for col in selected_features}
         full_dict.update(inputs)
-
         df = pd.DataFrame([full_dict])[selected_features]
 
-        prediction = model.predict(df)[0]
-        proba = model.predict_proba(df)[0]
+        if model_choice == "RandomForest":
+            prediction = rf_model.predict(df)[0]
+            proba = rf_model.predict_proba(df)[0]
+        else:
+            xgb_model = XGBClassifier(use_label_encoder=False, eval_metric="logloss")
+            X = data[selected_features]
+            y = data["insécurité_alimentaire"].replace({1:0, 2:1}).astype(int)
+            xgb_model.fit(X, y)
+            prediction = xgb_model.predict(df)[0]
+            proba = xgb_model.predict_proba(df)[0]
 
-        mapping = {0: "Insécurité alimentaire modérée", 1: "Insécurité alimentaire sévère"}
+        mapping = {
+            0: "Insécurité alimentaire modérée",
+            1: "Insécurité alimentaire sévère"
+        }
 
-        st.success(f"Résultat : {mapping[prediction]}")
+        st.success(f"Résultat ({model_choice}) : {mapping[prediction]}")
         st.info(f"📊 Probabilité modérée : {round(float(proba[0]), 3)}")
         st.info(f"📊 Probabilité sévère : {round(float(proba[1]), 3)}")
+
