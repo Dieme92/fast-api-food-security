@@ -3,27 +3,42 @@ import joblib
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
-from xgboost import XGBClassifier
+from sklearn.metrics import (
+    roc_curve, auc, confusion_matrix, classification_report,
+    accuracy_score, precision_score, recall_score, f1_score
+)
+from sklearn.model_selection import train_test_split
 
-# Charger le bundle (modèle + features)
-bundle = joblib.load("modele_food_insecurity_best.pkl")
-rf_model = bundle["model"]
-selected_features = bundle["features"]
+# Charger les bundles (modèle + features)
+bundle_rf = joblib.load("modele_food_insecurity_best.pkl")
+bundle_xgb = joblib.load("modele_food_insecurity_xgb.pkl")
+
+models = {
+    "RandomForest": bundle_rf["model"],
+    "XGBoost": bundle_xgb["model"]
+}
+selected_features = bundle_rf["features"]
 
 # Charger dataset encodé
 data = pd.read_csv("data_encoded_1.csv")
+y = data["insécurité_alimentaire"].replace({1:0, 2:1}).astype(int)
+X = data[selected_features]
+
+# Séparer train/test
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
 
 # --- Sidebar exploration ---
 st.sidebar.title("🔎 Exploration des données")
 show_raw = st.sidebar.checkbox("📄 Données brutes")
 show_corr = st.sidebar.checkbox("📊 Matrice de corrélation")
-variables = st.sidebar.multiselect("📈 Choisir variables :", selected_features)
-show_curves = st.sidebar.button("Afficher distributions")
-show_importances = st.sidebar.button("🌟 Top 5 variables importantes (RandomForest)")
+variables = st.sidebar.multiselect("📈 Choisir les variables :", selected_features)
+show_curves = st.sidebar.button("Afficher les distributions")
+show_importances = st.sidebar.button("🌟 Top 5 des variables importantes (RandomForest)")
 
 # --- Exploration ---
-st.title("📊 Prédiction de l'insécurité alimentaire")
+st.title("📊 Projet de prédiction de l'insécurité alimentaire modérée ou sévère")
 
 if show_raw:
     st.subheader("📄 Données brutes")
@@ -38,15 +53,24 @@ if show_corr:
 
 if show_curves and variables:
     st.subheader("📈 Distribution des variables choisies")
-    for var in variables:
-        fig, ax = plt.subplots(figsize=(3.5, 3))
-        sns.histplot(data[var], bins=10, kde=True, ax=ax)
-        ax.set_title(var, fontsize=9)
-        st.pyplot(fig)
+    n = len(variables)
+    rows = (n // 2) + (n % 2)
+    idx = 0
+    for r in range(rows):
+        cols = st.columns(2)
+        for c in range(2):
+            if idx < n:
+                var = variables[idx]
+                with cols[c]:
+                    fig, ax = plt.subplots(figsize=(3.5, 3))
+                    sns.histplot(data[var], bins=10, kde=True, ax=ax)
+                    ax.set_title(var, fontsize=9)
+                    st.pyplot(fig)
+                idx += 1
 
 if show_importances:
     st.subheader("🌟 Top 5 variables importantes (RandomForest)")
-    importances = rf_model.feature_importances_
+    importances = models["RandomForest"].feature_importances_
     top_idx = importances.argsort()[-5:]
     top_features = [selected_features[i] for i in top_idx]
     top_values = importances[top_idx]
@@ -55,70 +79,58 @@ if show_importances:
     ax.set_title("Top 5 Features - RandomForest")
     st.pyplot(fig)
 
-# --- Sélecteur de modèle ---
-st.sidebar.title("⚙️ Choix du modèle")
-model_choice = st.sidebar.radio("Sélectionner le modèle :", ["RandomForest", "XGBoost"])
+# --- Comparaison automatique ---
+st.header("📊 Comparaison RandomForest vs XGBoost (train vs test)")
 
-# --- Évaluation globale ---
-st.header("📊 Évaluation du modèle")
-if st.button("Afficher ROC & Matrice de confusion"):
-    X = data[selected_features]
-    y = data["insécurité_alimentaire"].replace({1:0, 2:1}).astype(int)
+results = []
+fig_cm, axes_cm = plt.subplots(2, 2, figsize=(10, 8))
+fig_roc, ax_roc = plt.subplots(figsize=(6, 4))
 
-    if model_choice == "RandomForest":
-        y_pred = rf_model.predict(X)
-        y_proba = rf_model.predict_proba(X)[:, 1]
-    else:
-        xgb_model = XGBClassifier(use_label_encoder=False, eval_metric="logloss")
-        xgb_model.fit(X, y)
-        y_pred = xgb_model.predict(X)
-        y_proba = xgb_model.predict_proba(X)[:, 1]
+for j, (name, model) in enumerate(models.items()):
+    y_pred_train = model.predict(X_train)
+    y_proba_train = model.predict_proba(X_train)[:, 1]
+    cm_train = confusion_matrix(y_train, y_pred_train, labels=[0,1])
+    sns.heatmap(cm_train, annot=True, fmt="d", cmap="Blues", ax=axes_cm[0, j],
+                xticklabels=["Modérée", "Sévère"], yticklabels=["Modérée", "Sévère"])
+    axes_cm[0, j].set_title(f"{name} - Train")
 
-    report = classification_report(y, y_pred, target_names=["Modérée", "Sévère"])
-    st.text(f"📊 Rapport {model_choice} :\n" + report)
+    y_pred_test = model.predict(X_test)
+    y_proba_test = model.predict_proba(X_test)[:, 1]
+    cm_test = confusion_matrix(y_test, y_pred_test, labels=[0,1])
+    sns.heatmap(cm_test, annot=True, fmt="d", cmap="Reds", ax=axes_cm[1, j],
+                xticklabels=["Modérée", "Sévère"], yticklabels=["Modérée", "Sévère"])
+    axes_cm[1, j].set_title(f"{name} - Test")
 
-    cm = confusion_matrix(y, y_pred, labels=[0,1])
-    fig, ax = plt.subplots(figsize=(4, 3))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax,
-                xticklabels=["Modérée", "Sévère"],
-                yticklabels=["Modérée", "Sévère"])
-    ax.set_title(f"Matrice de confusion - {model_choice}")
-    st.pyplot(fig)
-
-    fpr, tpr, thresholds = roc_curve(y, y_proba, pos_label=1)
+    fpr, tpr, _ = roc_curve(y_test, y_proba_test, pos_label=1)
     roc_auc = auc(fpr, tpr)
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(fpr, tpr, color="blue", lw=2, label=f"AUC = {roc_auc:.5f}")
-    ax.plot([0, 1], [0, 1], color="gray", lw=1, linestyle="--")
-    ax.set_title(f"Courbe ROC - {model_choice}")
-    ax.legend(loc="lower right")
-    st.pyplot(fig)
+    ax_roc.plot(fpr, tpr, lw=2, label=f"{name} (AUC test={roc_auc:.3f})")
 
-# --- Comparaison graphique ---
-st.header("📊 Comparaison RandomForest vs XGBoost")
-if st.button("Afficher comparaison graphique"):
-    results = pd.DataFrame({
-        "Modèle": ["RandomForest", "XGBoost"],
-        "Accuracy": [0.992308, 0.992308],
-        "Recall (Sévère)": [0.98, 0.97],
-        "Précision (Sévère)": [0.87, 1.00],
-        "F1-score (Sévère)": [0.92, 0.99],
-        "AUC": [0.999873, 0.999958]
+    results.append({
+        "Modèle": name,
+        "Accuracy (test)": accuracy_score(y_test, y_pred_test),
+        "Recall (Sévère test)": recall_score(y_test, y_pred_test, pos_label=1),
+        "Précision (Sévère test)": precision_score(y_test, y_pred_test, pos_label=1),
+        "F1-score (Sévère test)": f1_score(y_test, y_pred_test, pos_label=1),
+        "AUC (test)": roc_auc
     })
-    st.dataframe(results, use_container_width=True)
 
-    metrics = ["Accuracy", "Recall (Sévère)", "Précision (Sévère)", "F1-score (Sévère)", "AUC"]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    results.set_index("Modèle")[metrics].plot(kind="bar", ax=ax)
-    ax.set_title("Comparaison des métriques principales")
-    ax.set_ylabel("Score")
-    plt.xticks(rotation=0)
-    st.pyplot(fig)
+results_df = pd.DataFrame(results)
+st.dataframe(results_df, use_container_width=True)
 
-# --- Section prédiction (à la fin) ---
-st.header("🎯 Prédiction personnalisée")
-st.markdown("Entrez les fréquences observées sur les 7 derniers jours (0 = jamais, 1 = 1-2 jours, 2 = 3-4 jours, 3 = 5-7 jours) :")
+st.subheader("Matrice de confusion (train vs test)")
+st.pyplot(fig_cm)
 
+ax_roc.plot([0, 1], [0, 1], color="gray", lw=1, linestyle="--")
+ax_roc.set_title("Courbes ROC comparées (jeu de test)")
+ax_roc.legend(loc="lower right")
+st.pyplot(fig_roc)
+
+best_model_row = results_df.loc[results_df["AUC (test)"].idxmax()]
+best_model_name = best_model_row["Modèle"]
+st.success(f"🏆 Meilleur modèle : {best_model_name} (AUC test = {best_model_row['AUC (test)']:.4f})")
+
+# --- Section prédiction ---
+st.header("🎯 Prédiction de l'insécurité alimentaire")
 inputs = {}
 for col in [
     "q600_inquiets_de_ne_pas_avoir_suffisamment_de_nourriture",
@@ -131,35 +143,22 @@ for col in [
     "q607_1_passer_toute_une_journee_sans_manger"
 ]:
     inputs[col] = st.number_input(col, min_value=0, max_value=3, step=1)
+
 if st.button("Prédire"):
-    # Vérifier si toutes les variables valent zéro
-    if all(value == 0 for value in inputs.values()):
-        st.success("Résultat : Sécurité alimentaire ✅")
-        st.info("📊 Probabilité modérée : 0.0")
-        st.info("📊 Probabilité sévère : 0.0")
+    full_dict = {col: 0 for col in selected_features}
+    full_dict.update(inputs)
+    df = pd.DataFrame([full_dict])[selected_features]
+
+    # Règle métier : si toutes les variables sont à 0
+    if df.sum(axis=1).iloc[0] == 0:
+        st.success("Résultat : Pas d'insécurité alimentaire")
     else:
-        # Préparer le dataframe pour la prédiction
-        full_dict = {col: 0 for col in selected_features}
-        full_dict.update(inputs)
-        df = pd.DataFrame([full_dict])[selected_features]
+        model = models[best_model_name]
+        prediction = model.predict(df)[0]
+        proba = model.predict_proba(df)[0]
 
-        if model_choice == "RandomForest":
-            prediction = rf_model.predict(df)[0]
-            proba = rf_model.predict_proba(df)[0]
-        else:
-            xgb_model = XGBClassifier(use_label_encoder=False, eval_metric="logloss")
-            X = data[selected_features]
-            y = data["insécurité_alimentaire"].replace({1:0, 2:1}).astype(int)
-            xgb_model.fit(X, y)
-            prediction = xgb_model.predict(df)[0]
-            proba = xgb_model.predict_proba(df)[0]
+        mapping = {0: "Insécurité alimentaire modérée", 1: "Insécurité alimentaire sévère"}
 
-        mapping = {
-            0: "Insécurité alimentaire modérée",
-            1: "Insécurité alimentaire sévère"
-        }
-
-        st.success(f"Résultat ({model_choice}) : {mapping[prediction]}")
+        st.success(f"Résultat ({best_model_name}) : {mapping[prediction]}")
         st.info(f"📊 Probabilité modérée : {round(float(proba[0]), 3)}")
         st.info(f"📊 Probabilité sévère : {round(float(proba[1]), 3)}")
-
